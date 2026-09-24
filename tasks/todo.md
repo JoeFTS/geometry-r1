@@ -36,7 +36,9 @@ soundtrack. Joe asked for end-to-end: build, test, deploy, then show him.
 - [x] e2e 38/38 on the live URL; showcase v2
 - [x] Joe measured side lag ~120 ms on the R1 -> side jumps now rewound by data.sideLag (default 120, recalibrated on leaving BUTTON TEST)
 - [x] Volume starts at 50% every launch
-- [ ] Joe: playtest the compensated side-button jump
+- [x] Round 3: touch felt laggy too -> touch jumps rewound to the OS touch timestamp; desynchronized canvas
+- [x] Round 3: layout -> no stars/planet, stats bar on top, music strip + big JUMP button at the bottom
+- [ ] Joe: playtest touch + side-button feel; BUTTON TEST now also shows touch delay
 
 ## Review
 - Built and deployed 2026-09-24. Live: https://joefts.github.io/geometry-r1/src/index.html ; QR docs/install-qr.png ; showcase https://claude.ai/artifact/MVEq25nuUR9yYWoMuC4r9y
