@@ -34,7 +34,9 @@ soundtrack. Joe asked for end-to-end: build, test, deploy, then show him.
 - [x] 16x16 pixel rabbit replaces the cube, one full flip per jump, eases upright; pilots the ship
 - [x] BUTTON TEST screen: event log + side-button lag vs touch + FPS
 - [x] e2e 38/38 on the live URL; showcase v2
-- [ ] Joe: run BUTTON TEST on the R1, report side lag + FPS -> decide on lag compensation (rewind the jump by the measured lag)
+- [x] Joe measured side lag ~120 ms on the R1 -> side jumps now rewound by data.sideLag (default 120, recalibrated on leaving BUTTON TEST)
+- [x] Volume starts at 50% every launch
+- [ ] Joe: playtest the compensated side-button jump
 
 ## Review
 - Built and deployed 2026-09-24. Live: https://joefts.github.io/geometry-r1/src/index.html ; QR docs/install-qr.png ; showcase https://claude.ai/artifact/MVEq25nuUR9yYWoMuC4r9y
