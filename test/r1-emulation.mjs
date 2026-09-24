@@ -51,7 +51,7 @@ if (!ONLY_SONGS) {
   const { page, errors } = await newPage();
   await shot(page, '01-splash');
   ok('boots to splash', await G(page, 'g.state') === 'SPLASH');
-  ok('volume starts at 50%', await G(page, 'g.data.volume') === 0.5 && await G(page, 'g.music.volume') === 0.5);
+  ok('volume starts at 30%', await G(page, 'g.data.volume') === 0.3 && await G(page, 'g.music.volume') === 0.3);
   await page.touchscreen.tap(120, 200);
   await sleep(400);
   ok('tap unlocks audio -> menu', await G(page, 'g.state') === 'MENU');
@@ -105,7 +105,7 @@ if (!ONLY_SONGS) {
   await page.touchscreen.tap(box.x, box.y); await sleep(30);
   ok('screen tap jumps', await G(page, 'g.state === "PLAY" && !g.P.grounded'), `before tap: ${pre}; after: ${await G(page, 'g.state + (g.P.dead ? " " + g.P.dead.what : "")')}`);
   await fire(page, 'scrollUp'); await sleep(80);
-  ok('wheel in-run changes volume (50% -> 60%)', Math.abs(await G(page, 'g.data.volume') - 0.6) < 1e-6);
+  ok('wheel in-run changes volume (30% -> 40%)', Math.abs(await G(page, 'g.data.volume') - 0.4) < 1e-6);
   await shot(page, '04-run-volume');
   // no input: the first obstacle kills us
   await page.waitForFunction(() => window.__game.state === 'DEAD', null, { timeout: 20000 });

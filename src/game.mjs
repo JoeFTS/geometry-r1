@@ -34,13 +34,30 @@ const COL = {
 
 // ---------- canvas ----------
 const canvas = document.getElementById('c');
-const dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
-canvas.width = W * dpr; canvas.height = H * dpr;
+// Drawn at 1x and scaled up by CSS (image-rendering: pixelated). It's pixel art anyway,
+// and on a 2x screen this is a quarter of the pixels for the R1's GPU to fill each frame.
+canvas.width = W; canvas.height = H;
 // desynchronized = Android's low-latency canvas: frames skip the compositor queue (~1 frame sooner)
-const g = canvas.getContext('2d', { alpha: false, desynchronized: true });
-g.setTransform(dpr, 0, 0, dpr, 0, 0);
+let g = canvas.getContext('2d', { alpha: false, desynchronized: true });   // (let: sprite painters borrow it)
 // older Android WebViews lack roundRect: square corners are fine
 if (!g.roundRect) g.roundRect = function (x, y, w, h) { this.rect(x, y, w, h); };
+
+// ---------- sprite caches: draw once, blit every frame ----------
+const makeCanvas = (w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; };
+// text: every distinct (string, size, colour) is rasterised once
+const textCache = new Map();
+function textSprite(s, size, color) {
+  const key = size + '|' + color + '|' + s;
+  let c = textCache.get(key);
+  if (!c) {
+    if (textCache.size > 300) textCache.clear();
+    const m = makeCanvas(1, 1).getContext('2d'); m.font = `${size}px ${FONT}`;
+    c = makeCanvas(Math.ceil(m.measureText(s).width) + 2, size + 4);
+    const x = c.getContext('2d'); x.font = `${size}px ${FONT}`; x.fillStyle = color; x.textBaseline = 'top'; x.fillText(s, 0, 1);
+    textCache.set(key, c);
+  }
+  return c;
+}
 
 // ---------- the rabbit: a 16x16 pixel sprite filling the hitbox square ----------
 const RABBIT = [
@@ -72,7 +89,7 @@ const rabbitSprite = (() => {
 
 // ---------- state ----------
 const music = new Music();
-let data = { best: [0, 0, 0], attempts: [0, 0, 0], diff: 0, volume: 0.5, sideLag: 120 };
+let data = { best: [0, 0, 0], attempts: [0, 0, 0], diff: 0, volume: 0.3, sideLag: 120 };
 let state = 'SPLASH';            // SPLASH -> MENU -> PLAY <-> PAUSE, PLAY -> DEAD
 let world = null, P = null, bot = null;
 let acc = 0, renderX = 0, renderY = 0;
@@ -168,6 +185,7 @@ canvas.addEventListener('pointerdown', (e) => {
     }
   }
   if (state === 'DEAD' && deathTimer > 0.45 && y > 146 && y < 176 && x > 76 && x < 164) { toMenu(); return; }
+  ripple(x, y >= BTN_Y - 8 ? y : BTN_Y + BTN_H / 2);
   if (state === 'PLAY') rewindJump(e.timeStamp || performance.now());
   else press();
 }, { passive: false });
@@ -185,7 +203,10 @@ canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 // press there, and replay the recorded input up to now. Falls back to an ordinary
 // buffered press if a jump already happened in that window, the press is newer than the
 // physics, or the replay would die (it can't undo the past).
+// Plus one frame for the display: what you react to is already a frame old on screen.
+const DISPLAY_MS = 17;
 function rewindJump(tPress) {
+  tPress -= DISPLAY_MS;
   if (state !== 'PLAY' || bot || P.ship) { press(); return; }
   const back = Math.min(24, Math.floor((simNowMs - tPress) / (DT * 1000)));
   if (back < 1 || hist.length < back) { press(); return; }
@@ -204,13 +225,14 @@ function rewindJump(tPress) {
   hist.splice(k, hist.length - k, ...replay);
   visOffsetY += P.y - s.y;
   P = s;
+  miniHop();
 }
 
 // R1 hardware (creations-sdk): the side button is the jump button.
 //   sideClick      -> one jump (buffered, so pressing just before landing still counts)
 //   longPressStart -> held: keeps bouncing, or keeps the ship climbing, until longPressEnd
 // A double click arrives as two sideClicks ~50 ms apart; the second just re-arms the buffer.
-window.addEventListener('sideClick', (e) => { if (state !== 'PROBE') rewindJump((e.timeStamp || performance.now()) - (data.sideLag || 0)); });
+window.addEventListener('sideClick', (e) => { if (state !== 'PROBE') ripple(W - 30, BTN_Y + BTN_H / 2); if (state !== 'PROBE') rewindJump((e.timeStamp || performance.now()) - (data.sideLag || 0)); });
 window.addEventListener('longPressStart', () => { if (state === 'PROBE') return; sideHeld = true; press(); });
 window.addEventListener('longPressEnd', () => { sideHeld = false; });
 window.addEventListener('scrollUp', () => wheel(-1));
@@ -259,10 +281,49 @@ document.addEventListener('visibilitychange', () => {
   else if (state !== 'PAUSE') music.resume();
 });
 
+// ---------- the JUMP button's mini rabbit ----------
+// A little rabbit lives in the button. Every real jump it hops forward and flips; it
+// wraps back to the start after grabbing the carrot at the end of its track. On the menu
+// it hops to the beat. Presses squash the button and send a ripple from your thumb.
+const TRACK_X0 = 22, TRACK_X1 = 142, HOP_S = 0.3;
+const mini = { x: TRACK_X0, from: TRACK_X0, to: TRACK_X0, t: 1, dust: [], ripples: [], squash: 0, carrot: 0, lastBeat: -1 };
+function miniHop() {
+  if (mini.t < 1) mini.x = mini.to;            // mid-hop: finish instantly and chain
+  mini.from = mini.x; mini.to = mini.x + 20; mini.t = 0;
+}
+function ripple(x, y) {
+  mini.ripples.push({ x: Math.max(12, Math.min(W - 12, x)), y: Math.max(BTN_Y + 6, Math.min(BTN_Y + BTN_H - 6, y)), r: 4, life: 1 });
+  if (mini.ripples.length > 4) mini.ripples.shift();
+  mini.squash = 1;
+}
+function updateMini(dt) {
+  if (mini.t < 1) {
+    mini.t = Math.min(1, mini.t + dt / HOP_S);
+    if (mini.t === 1) {
+      mini.x = mini.to;
+      for (let i = 0; i < 4; i++) mini.dust.push({ x: mini.x + 8 + (i - 1.5) * 3, y: BTN_Y + 40, vx: (i - 1.5) * 18, vy: -20 - i * 4, life: 0.35 });
+      if (mini.x > TRACK_X1) { mini.carrot = 1; mini.x = mini.from = mini.to = TRACK_X0; }   // ate the carrot: back to the start
+    }
+  }
+  for (const d of mini.dust) { d.x += d.vx * dt; d.y += d.vy * dt; d.vy += 90 * dt; d.life -= dt; }
+  mini.dust = mini.dust.filter((d) => d.life > 0);
+  for (const r of mini.ripples) { r.r += 180 * dt; r.life -= dt * 2.8; }
+  mini.ripples = mini.ripples.filter((r) => r.life > 0);
+  mini.squash = Math.max(0, mini.squash - dt * 8);
+  mini.carrot = Math.max(0, mini.carrot - dt * 2);
+}
+const CARROT = ['.G.G.', '..G..', '.OOO.', '.OOO.', '.OOO.', '..OO.', '..O..'];
+const carrotSprite = (() => {
+  const c = makeCanvas(5, 7), x = c.getContext('2d');
+  CARROT.forEach((row, y) => [...row].forEach((ch, i) => { if (ch !== '.') { x.fillStyle = ch === 'G' ? '#5ee29a' : '#ff8a2a'; x.fillRect(i, y, 1, 1); } }));
+  return c;
+})();
+
 // ---------- update ----------
 function update(dt) {
   if (volShow > 0) volShow -= dt;
   menuT += dt;
+  updateMini(dt);
   if (state === 'PLAY') {
     acc += dt;
     while (acc >= DT && state === 'PLAY') {
@@ -273,7 +334,8 @@ function update(dt) {
       hist.push({ s: before, held: h, jumped: ev.some((e) => e.type === 'jump') });
       if (hist.length > HIST_MAX) hist.shift();
       for (const e of ev) {
-        if (e.type === 'pad') music.sfx('pad');
+        if (e.type === 'jump') miniHop();
+        if (e.type === 'pad') { music.sfx('pad'); miniHop(); }
         else if (e.type === 'portal') {
           flash = 0.1;
           if (e.kind === T.PORTAL_SHIP) { flashColor = COL.ship; music.sfx('ship'); }
@@ -301,17 +363,23 @@ function playerScreen() {
   return [PX + 8, screenY(renderY, TILE, P.inv) + 8];
 }
 function text(s, x, y, size = 8, color = COL.text, align = 'left') {
-  g.font = `${size}px ${FONT}`; g.fillStyle = color; g.textAlign = align; g.textBaseline = 'top';
-  g.fillText(s, x, y);
+  const c = textSprite(String(s), size, color);
+  const dx = align === 'center' ? x - (c.width - 2) / 2 : align === 'right' ? x - (c.width - 2) : x;
+  g.drawImage(c, Math.round(dx), Math.round(y) - 1);
 }
 function tri(x1, y1, x2, y2, x3, y3) { g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.lineTo(x3, y3); g.closePath(); }
 const mix = (a, b, t) => a + (b - a) * t;
 
+const skyCache = [];
 function drawSky(tier, vis) {
   const kick = music.env(vis.kickT, 9), bar = music.env(vis.barT, 3);
-  const grd = g.createLinearGradient(0, 0, 0, STRIP_Y);
-  grd.addColorStop(0, COL.bgTop[tier]); grd.addColorStop(1, COL.bgBot[tier]);
-  g.fillStyle = grd; g.fillRect(0, 0, W, STRIP_Y);
+  if (!skyCache[tier]) {
+    const c = skyCache[tier] = makeCanvas(W, STRIP_Y), x = c.getContext('2d');
+    const grd = x.createLinearGradient(0, 0, 0, STRIP_Y);
+    grd.addColorStop(0, COL.bgTop[tier]); grd.addColorStop(1, COL.bgBot[tier]);
+    x.fillStyle = grd; x.fillRect(0, 0, W, STRIP_Y);
+  }
+  g.drawImage(skyCache[tier], 0, 0);
   if (kick > 0.01) { g.fillStyle = `rgba(120,90,255,${0.07 * kick})`; g.fillRect(0, 0, W, STRIP_Y); }
   if (bar > 0.01) { g.fillStyle = `rgba(255,79,0,${0.05 * bar})`; g.fillRect(0, 0, W, STRIP_Y); }
 }
@@ -343,24 +411,61 @@ function drawMusicStrip(vis) {
   else for (let k = 0; k < Math.ceil(data.volume * 3); k++) g.fillRect(vx + 10 + k * 3, vy + 8 - k * 3, 2, 2 + k * 3);
 }
 
-// Big bottom button. Its label says what a press does right now.
+// Big bottom button: a little rabbit track on the left, the action on the right.
 function drawButton(vis) {
-  let label = 'JUMP', sub = '';
-  if (state === 'SPLASH') { label = 'START'; sub = 'or side button'; }
-  else if (state === 'MENU') { label = menuSel === 3 ? 'OPEN' : 'PLAY'; sub = 'or side button'; }
+  let label = 'JUMP';
+  if (state === 'SPLASH') label = 'START';
+  else if (state === 'MENU') label = menuSel === 3 ? 'OPEN' : 'PLAY';
   else if (state === 'DEAD') label = deathTimer > 0.45 ? 'RETRY' : '';
   else if (state === 'PAUSE') label = 'RESUME';
+  if ((state === 'MENU' || state === 'SPLASH') && music.playing && vis.beatT !== mini.lastBeat && vis.beatT > 0) {
+    mini.lastBeat = vis.beatT; if (vis.beat % 2 === 0) miniHop();      // hop every other beat on the menu
+  }
   const down = held() && state === 'PLAY', kick = music.env(vis.kickT, 8);
   g.fillStyle = '#070722'; g.fillRect(0, BTN_Y - 4, W, H - BTN_Y + 4);
-  g.beginPath(); g.roundRect(6, BTN_Y, W - 12, BTN_H, 8);
-  g.fillStyle = down ? COL.accent : '#1a1250'; g.fill();
+  const sq = mini.squash * 3;                                          // squash: shrink 3 px top & bottom
+  g.beginPath(); g.roundRect(6, BTN_Y + sq, W - 12, BTN_H - sq * 2, 8);
+  g.fillStyle = down ? '#34207a' : '#1a1250'; g.fill();
+  g.save(); g.clip();
+  for (const r of mini.ripples) {
+    g.globalAlpha = r.life * 0.55; g.fillStyle = COL.accent;
+    g.beginPath(); g.arc(r.x, r.y, r.r, 0, Math.PI * 2); g.fill();
+  }
+  g.globalAlpha = 1;
+  g.restore();
+  g.beginPath(); g.roundRect(6, BTN_Y + sq, W - 12, BTN_H - sq * 2, 8);   // ripples replaced the path: rebuild it for the border
   g.lineWidth = 2; g.strokeStyle = down ? '#ffb48a' : `rgb(255,${Math.round(79 + 100 * kick)},${Math.round(40 * kick)})`; g.stroke(); g.lineWidth = 1;
-  if (label) text(label, W / 2, BTN_Y + (sub ? 10 : 17), 16, down ? '#fff' : COL.accent, 'center');
-  if (sub) text(sub, W / 2, BTN_Y + 34, 8, COL.dim, 'center');
+  // track: dotted ground, carrot at the end
+  const gy = BTN_Y + 40;
+  g.fillStyle = '#4a3f99'; for (let x = TRACK_X0 - 4; x < TRACK_X1 + 26; x += 6) g.fillRect(x, gy, 3, 1);
+  if (mini.carrot > 0) { g.globalAlpha = mini.carrot; text('+1', TRACK_X1 + 18, gy - 26 - (1 - mini.carrot) * 8, 8, COL.gold, 'center'); g.globalAlpha = 1; }
+  g.imageSmoothingEnabled = false; g.drawImage(carrotSprite, TRACK_X1 + 16, gy - 7, 5, 7);
+  for (const d of mini.dust) { g.globalAlpha = Math.min(1, d.life * 3); g.fillStyle = '#b8b0e8'; g.fillRect(d.x, d.y, 2, 2); }
+  g.globalAlpha = 1;
+  // the mini rabbit
+  const t = mini.t, x = t < 1 ? mini.from + (mini.to - mini.from) * t : mini.x;
+  const hopY = t < 1 ? Math.sin(t * Math.PI) * 14 : 0;
+  let rot = t < 1 ? t * 360 : 0;
+  if (state === 'DEAD') rot = -90;                                     // knocked over
+  drawRabbit(x + 8, gy - 8 - hopY, rot);
+  if (state === 'PAUSE') text('z', x + 18, gy - 24 - ((menuT * 8) | 0) % 6, 8, COL.dim);
+  if (label) text(label, W - 20, BTN_Y + 17, 16, down ? '#fff' : COL.accent, 'right');
 }
 
+const tileCache = new Map();
 function drawTile(t, sx, sy, flip, pulse) {
   if (t === T.SPIKE_DOWN) { t = T.SPIKE; flip = !flip; }
+  const lvl = Math.min(3, Math.round(pulse * 4)), key = t * 100 + (flip ? 10 : 0) + lvl;
+  let c = tileCache.get(key);
+  if (!c) {
+    c = makeCanvas(TILE, TILE);
+    const saved = g; g = c.getContext('2d');
+    paintTile(t, 0, 0, flip, lvl / 4);
+    g = saved; tileCache.set(key, c);
+  }
+  g.drawImage(c, sx, sy);
+}
+function paintTile(t, sx, sy, flip, pulse) {
   const edge = pulse > 0.05 ? `rgb(255,${Math.round(255 - 120 * pulse)},${Math.round(255 - 200 * pulse)})` : COL.edge;
   g.lineWidth = 1;
   if (t === T.BLOCK) {
@@ -500,7 +605,8 @@ function drawMenu(vis) {
     text(data.best[d] ? data.best[d].toFixed(1) + 's' : '--', 208, y + 7, 8, sel ? '#fff' : COL.dim, 'right');
   }
   text(`ATTEMPTS ${data.attempts[data.diff]}`, W / 2, 158, 8, '#5a5090', 'center');
-  text('WHEEL = LEVEL', W / 2, 172, 8, COL.dim, 'center');
+  text('WHEEL = LEVEL', W / 2, 170, 8, COL.dim, 'center');
+  text('SIDE BUTTON = JUMP', W / 2, 182, 8, COL.dim, 'center');
   // the rabbit hops and flips on every beat, standing on the music strip
   const hop = music.playing && vis.beatT > 0 ? Math.min(1, (music.ctx.currentTime - vis.beatT) / 0.3) : 1;
   drawRabbit(28, STRIP_Y - 8 - Math.sin(hop * Math.PI) * 12, hop < 1 ? hop * 360 : 0);
@@ -565,7 +671,7 @@ function render() {
 
 // ---------- loop ----------
 let last = performance.now();
-const perf = { frames: 0, sum: 0, max: 0, updMax: 0 };
+const perf = { frames: 0, sum: 0, max: 0, updMax: 0, work: 0, render: 0, renderMax: 0 };
 function frame(now) {
   let dt = (now - last) / 1000; last = now;
   perf.frames++; perf.sum += dt; perf.max = Math.max(perf.max, dt);
@@ -574,15 +680,17 @@ function frame(now) {
   const t0 = performance.now();
   update(dt);
   simNowMs = now - acc * 1000;
+  const r0 = performance.now();
   render();
-  perf.updMax = Math.max(perf.updMax, performance.now() - t0);
+  perf.render += performance.now() - r0; perf.renderMax = Math.max(perf.renderMax, performance.now() - r0);
+  const work = performance.now() - t0; perf.work += work; perf.updMax = Math.max(perf.updMax, work);
   requestAnimationFrame(frame);
 }
 
 async function boot() {
   data = await load();
   menuSel = data.diff;
-  data.volume = 0.5;               // every launch starts at 50%; the wheel changes it for the session
+  data.volume = 0.3;               // every launch starts at 30%; the wheel changes it for the session
   music.volume = data.volume;
   try { await document.fonts.load(`8px ${FONT}`); await document.fonts.load(`16px ${FONT}`); } catch { /* fallback font */ }
   requestAnimationFrame((t) => { last = t; frame(t); });
@@ -594,5 +702,5 @@ window.__game = {
   get state() { return state; }, get P() { return P; }, get data() { return data; }, music, perf,
   press, wheel, startRun, toMenu, rewindJump,
   setHeld(v) { keyHeld = v; },
-  resetPerf() { perf.frames = 0; perf.sum = 0; perf.max = 0; perf.updMax = 0; },
+  resetPerf() { perf.frames = 0; perf.sum = 0; perf.max = 0; perf.updMax = 0; perf.work = 0; perf.render = 0; perf.renderMax = 0; },
 };
