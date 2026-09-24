@@ -28,6 +28,14 @@ soundtrack. Joe asked for end-to-end: build, test, deploy, then show him.
 - [x] Showcase page for Joe (screens, songs, QR)
 - [ ] Joe: scan QR on the R1 and playtest (only step Claude can't do)
 
+## Round 2 — Joe feedback 2026-09-24 ("jumping should be more responsive", "side button as jump", "rabbit avatar that flips")
+- [x] Side button = jump (sideClick), hold = longPressStart..End; any raw key also jumps
+- [x] Jump buffer 67 -> 125 ms, coyote time 50 ms; solver + bot re-pass
+- [x] 16x16 pixel rabbit replaces the cube, one full flip per jump, eases upright; pilots the ship
+- [x] BUTTON TEST screen: event log + side-button lag vs touch + FPS
+- [x] e2e 38/38 on the live URL; showcase v2
+- [ ] Joe: run BUTTON TEST on the R1, report side lag + FPS -> decide on lag compensation (rewind the jump by the measured lag)
+
 ## Review
 - Built and deployed 2026-09-24. Live: https://joefts.github.io/geometry-r1/src/index.html ; QR docs/install-qr.png ; showcase https://claude.ai/artifact/MVEq25nuUR9yYWoMuC4r9y
 - Tests: solver 33/33 chunks, 1056/1056 pairs, 11/11 ship (now at 180 AND 270 px/s); bot 150 s x 4 seeds x 3 levels; R1 emulation 34/34 against the live URL (60 fps at 4x CPU throttle).
