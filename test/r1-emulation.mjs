@@ -111,6 +111,30 @@ if (!ONLY_SONGS) {
   await shot(page, '06-paused');
   await page.touchscreen.tap(120, 150); await sleep(300);
   ok('tap resumes', await G(page, 'g.state') === 'PLAY' && await G(page, 'g.music.ctx.state') === 'running');
+  // side button held (longPressStart..End) keeps bouncing
+  await page.evaluate(() => window.__game.toMenu()); await sleep(200);
+  await fire(page, 'sideClick'); await sleep(300);
+  await page.waitForFunction(() => window.__game.P && window.__game.P.grounded);
+  const jumps = await page.evaluate(async () => {
+    const g = window.__game; let n = 0, prevVy = 0;   // count takeoffs: landing + re-jump happen in one substep
+    window.dispatchEvent(new CustomEvent('longPressStart'));
+    const t0 = performance.now();
+    while (performance.now() - t0 < 1200 && g.state === 'PLAY') { await new Promise((r) => setTimeout(r, 10)); if (g.P.vy < 0 && prevVy >= 0) n++; prevVy = g.P.vy; }
+    window.dispatchEvent(new CustomEvent('longPressEnd'));
+    return n;
+  });
+  ok('holding the side button keeps bouncing', jumps >= 2, `${jumps} jumps in 1.2 s`);
+  // BUTTON TEST screen measures side-button lag against a touch
+  await page.evaluate(() => window.__game.toMenu()); await sleep(200);
+  for (let i = 0; i < 3; i++) await fire(page, 'scrollDown');
+  await fire(page, 'sideClick'); await sleep(200);
+  ok('BUTTON TEST opens from the menu', await G(page, 'g.state') === 'PROBE');
+  for (let i = 0; i < 3; i++) { await page.touchscreen.tap(120, 150); await sleep(90); await fire(page, 'sideClick'); await sleep(250); }
+  await shot(page, '07-button-test');
+  const lag = await page.evaluate(() => window.__probe && window.__probe.lags);
+  ok('BUTTON TEST reports side lag', Array.isArray(lag) && lag.length === 3 && lag.every((v) => v > 50 && v < 300), JSON.stringify(lag && lag.map(Math.round)));
+  await fire(page, 'scrollUp'); await sleep(150);
+  ok('wheel leaves BUTTON TEST', await G(page, 'g.state') === 'MENU');
   ok('no page errors (flow)', errors.length === 0, errors.join(' | '));
 }
 

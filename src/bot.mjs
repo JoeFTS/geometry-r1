@@ -11,7 +11,7 @@ function adv(w, s, held) { const n = step(clonePlayer(s), w, held); return n.dea
 
 function cubeSafe(w, s, stepsLeft, memo) {
   if (stepsLeft <= 0) return true;
-  const k = `${Math.round(s.x * 4)}|${Math.round(s.y)}|${Math.round(s.vy / 4)}|${s.grounded ? 1 : 0}|${s.inv ? 1 : 0}|${s.ship ? 1 : 0}`;
+  const k = `${Math.round(s.x * 4)}|${Math.round(s.y)}|${Math.round(s.vy / 4)}|${s.grounded ? 1 : 0}|${s.inv ? 1 : 0}|${s.ship ? 1 : 0}|${s.coyote}`;
   if (memo.has(k)) return memo.get(k);
   memo.set(k, false);
   let ok = false;

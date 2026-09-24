@@ -11,8 +11,8 @@ const W = 240, H = 282;
 const Y0 = 112;                 // screen y of the local TOP (ceiling line)
 const FLOOR = Y0 + GY;          // screen y of the ground line (208)
 const PX = 56;                  // player's fixed screen x
-const CEIL_H = 14;
-const MENU_Y = 96;              // top of the difficulty list              // ceiling slab (Hard / Expert) drawn above the play band
+const CEIL_H = 14;              // ceiling slab (Hard / Expert) drawn above the play band
+const MENU_Y = 80, MENU_STEP = 25, MENU_ROWS = 4;   // level list + BUTTON TEST
 const FONT = '"Press Start 2P", monospace';
 const PARAMS = new URLSearchParams(location.search);
 const BOT = PARAMS.has('bot');
@@ -22,7 +22,7 @@ const COL = {
   bgBot: ['#16165a', '#2a1060', '#3c1250', '#48122a'],
   ground: '#1e1464', groundHi: '#6e5ad2', pit: '#05031a',
   block: '#181446', edge: '#ffffff', spikeFill: '#181446',
-  cube: '#14bee6', cubeIn: '#ffffff', ship: '#e650dc', flame: '#ffd23c',
+  cube: '#ff4f00', ship: '#14bee6', flame: '#ffd23c',
   accent: '#ff4f00',            // R1 orange
   dim: '#8c82c8', text: '#ffffff', gold: '#ffd23c', red: '#ff3b3b',
   flip: '#3c8cff', unflip: '#ffdc3c',
@@ -37,6 +37,34 @@ g.setTransform(dpr, 0, 0, dpr, 0, 0);
 // older Android WebViews lack roundRect: square corners are fine
 if (!g.roundRect) g.roundRect = function (x, y, w, h) { this.rect(x, y, w, h); };
 
+// ---------- the rabbit: a 16x16 pixel sprite filling the hitbox square ----------
+const RABBIT = [
+  'BBBBBBBBBBBBBBBB',
+  'BOOFFOOOOOOFFOOB',
+  'BOFPPFOOOOFPPFOB',
+  'BOFPPFOOOOFPPFOB',
+  'BOFPPFOOOOFPPFOB',
+  'BOFFFFOOOOFFFFOB',
+  'BOFFFFFFFFFFFFOB',
+  'BFFFFFFFFFFFFFFB',
+  'BFFEEFFFFFFEEFFB',
+  'BFFEWFFFFFFEWFFB',
+  'BFFFFFFNNFFFFFFB',
+  'BFPPFFMFFMFFPPFB',
+  'BFFFFFFMMFFFFFFB',
+  'BSFFFFFFFFFFFFSB',
+  'BSSFFFFFFFFFFSSB',
+  'BBBBBBBBBBBBBBBB',
+];
+const RABBIT_PAL = { B: '#7a2200', O: '#ff4f00', F: '#fff6ee', S: '#f0d2c0', P: '#ff9ac1',
+                     E: '#14102e', W: '#ffffff', N: '#e0306a', M: '#14102e' };
+const rabbitSprite = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 16;
+  const x = c.getContext('2d');
+  RABBIT.forEach((row, y) => [...row].forEach((ch, i) => { x.fillStyle = RABBIT_PAL[ch]; x.fillRect(i, y, 1, 1); }));
+  return c;
+})();
+
 // ---------- state ----------
 const music = new Music();
 let data = { best: [0, 0, 0], attempts: [0, 0, 0], diff: 0, volume: 0.7 };
@@ -49,6 +77,8 @@ let shake = 0, flash = 0, flashColor = '#fff';
 let volShow = 0;
 const parts = [];
 let menuT = 0;
+let menuSel = 0;                 // 0-2 = level, 3 = BUTTON TEST
+let visAngle = 0;                // drawn rotation: follows the flip, settles upright on landing
 
 const held = () => touchHeld || sideHeld || keyHeld;
 
@@ -60,7 +90,7 @@ const stars = [];
 // ---------- flow ----------
 function startRun() {
   world = new World(data.diff, (Date.now() ^ 0xA5A5F00D) >>> 0);
-  P = newPlayer(); acc = 0; parts.length = 0;
+  P = newPlayer(); acc = 0; parts.length = 0; visAngle = 0;
   attempt = ++data.attempts[data.diff]; save(data);
   bot = BOT ? createBot() : null;
   state = 'PLAY';
@@ -68,7 +98,7 @@ function startRun() {
   music.play(SONG_FOR_DIFF[data.diff]);
 }
 function toMenu() {
-  state = 'MENU'; touchHeld = sideHeld = false;
+  state = 'MENU'; touchHeld = sideHeld = keyHeld = false; menuSel = data.diff;
   music.setSpeedFactor(1); music.play('menu');
 }
 function die() {
@@ -83,7 +113,9 @@ function die() {
   try { navigator.vibrate && navigator.vibrate(60); } catch { /* no motor */ }
 }
 function changeDiff(d) {
-  data.diff = (data.diff + d + 3) % 3; save(data); music.sfx('blip');
+  menuSel = (menuSel + d + MENU_ROWS) % MENU_ROWS;
+  if (menuSel < 3) { data.diff = menuSel; save(data); }
+  music.sfx('blip');
 }
 function changeVolume(d) {
   data.volume = Math.round(Math.max(0, Math.min(1, data.volume + d)) * 10) / 10;
@@ -91,18 +123,19 @@ function changeVolume(d) {
 }
 
 // ---------- input ----------
-// primary = tap / side click. In a run it is a jump press (buffered ~65 ms).
+// primary = side button (or a screen tap). In a run it is a jump press, buffered 125 ms.
 function press() {
   music.unlock();
   switch (state) {
     case 'SPLASH': music.setVolume(data.volume); music.sfx('start'); toMenu(); break;
-    case 'MENU': music.sfx('start'); startRun(); break;
+    case 'MENU': music.sfx('start'); if (menuSel === 3) openProbe(); else startRun(); break;
     case 'PLAY': P.jumpBuffer = JUMP_BUFFER; break;
     case 'PAUSE': state = 'PLAY'; music.resume(); break;
     case 'DEAD': if (deathTimer > 0.45) startRun(); break;
   }
 }
 function wheel(dir) {                         // dir: -1 up, +1 down
+  if (state === 'PROBE') { toMenu(); return; }
   if (state === 'MENU') changeDiff(dir);
   else if (state === 'PLAY' || state === 'PAUSE' || state === 'DEAD') changeVolume(-dir * 0.1);
 }
@@ -113,12 +146,13 @@ function canvasPoint(e) {
 const active = new Set();
 canvas.addEventListener('pointerdown', (e) => {
   e.preventDefault();
-  active.add(e.pointerId); touchHeld = true;
   const [x, y] = canvasPoint(e);
+  if (state === 'PROBE') { music.unlock(); if (x > 176 && y > 250) toMenu(); return; }
+  active.add(e.pointerId); touchHeld = true;
   if (state === 'MENU') {
     if (x > 196 && y < 30) { music.unlock(); changeVolume(data.volume >= 1 ? -1 : 0.25); return; }   // speaker icon
-    for (let d = 0; d < 3; d++) if (y >= MENU_Y + d * 29 && y < MENU_Y + 26 + d * 29 && x > 24 && x < 216) {
-      if (d !== data.diff) { data.diff = d; save(data); music.sfx('blip'); return; }
+    for (let d = 0; d < MENU_ROWS; d++) if (y >= MENU_Y + d * MENU_STEP && y < MENU_Y + 22 + d * MENU_STEP && x > 24 && x < 216) {
+      if (d !== menuSel) { menuSel = d; if (d < 3) { data.diff = d; save(data); } music.sfx('blip'); return; }
     }
   }
   if (state === 'DEAD' && deathTimer > 0.45 && y > 176 && y < 206 && x > 132 && x < 212) { toMenu(); return; }
@@ -129,22 +163,49 @@ canvas.addEventListener('pointerup', release);
 canvas.addEventListener('pointercancel', release);
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
-// R1 hardware (creations-sdk): side button + scroll wheel
-window.addEventListener('sideClick', () => press());
-window.addEventListener('longPressStart', () => { sideHeld = true; if (state === 'PLAY') P.jumpBuffer = JUMP_BUFFER; else press(); });
+// R1 hardware (creations-sdk): the side button is the jump button.
+//   sideClick      -> one jump (buffered, so pressing just before landing still counts)
+//   longPressStart -> held: keeps bouncing, or keeps the ship climbing, until longPressEnd
+// A double click arrives as two sideClicks ~50 ms apart; the second just re-arms the buffer.
+window.addEventListener('sideClick', () => { if (state !== 'PROBE') press(); });
+window.addEventListener('longPressStart', () => { if (state === 'PROBE') return; sideHeld = true; press(); });
 window.addEventListener('longPressEnd', () => { sideHeld = false; });
 window.addEventListener('scrollUp', () => wheel(-1));
 window.addEventListener('scrollDown', () => wheel(1));
-// desktop dev: space = button, arrows = wheel, enter = side click, escape = menu
+// Keys: arrows = wheel, escape = menu. Any other key is the jump button (desktop Space, and
+// whatever key event the R1 might deliver for its button, which is faster than sideClick).
 window.addEventListener('keydown', (e) => {
-  if (e.repeat) return;
-  if (e.code === 'Space') { keyHeld = true; press(); e.preventDefault(); }
-  else if (e.key === 'ArrowUp') wheel(-1);
+  if (e.repeat || state === 'PROBE') return;
+  if (e.key === 'ArrowUp') wheel(-1);
   else if (e.key === 'ArrowDown') wheel(1);
-  else if (e.key === 'Enter') press();
-  else if (e.key === 'Escape' && state !== 'SPLASH') toMenu();
+  else if (e.key === 'Escape') { if (state !== 'SPLASH') toMenu(); }
+  else { keyHeld = true; press(); e.preventDefault(); }
 });
-window.addEventListener('keyup', (e) => { if (e.code === 'Space') keyHeld = false; });
+window.addEventListener('keyup', () => { keyHeld = false; });
+
+// ---------- BUTTON TEST: logs what the R1 actually delivers, and when ----------
+// Every event carries timeStamp on the same clock. Touch events are stamped by the OS at
+// the moment of contact, so pressing the side button and touching the screen together
+// shows how late the side button's event arrives compared with a touch.
+const probe = { log: [], lags: [], lastDown: -1, frames: 0, fpsT: 0, fps: 0 };
+window.__probe = probe;
+function openProbe() { state = 'PROBE'; probe.log = []; probe.lags = []; probe.lastDown = -1; music.stop(0.2); }
+function probeLog(name, t) {
+  if (state !== 'PROBE') return;
+  const prev = probe.log.length ? probe.log[probe.log.length - 1].t : t;
+  probe.log.push({ name, t, gap: t - prev });
+  if (probe.log.length > 11) probe.log.shift();
+  if (name === 'touch down') probe.lastDown = t;
+  if ((name === 'sideClick' || name === 'longPressStart' || name.startsWith('key down')) && probe.lastDown > 0 && t - probe.lastDown < 700) {
+    probe.lags.push(t - probe.lastDown); probe.lastDown = -1;
+  }
+}
+for (const n of ['sideClick', 'longPressStart', 'longPressEnd', 'scrollUp', 'scrollDown'])
+  window.addEventListener(n, (e) => probeLog(n, e.timeStamp || performance.now()), true);
+window.addEventListener('keydown', (e) => probeLog(`key down ${e.key || e.code}`, e.timeStamp), true);
+window.addEventListener('keyup', (e) => probeLog(`key up ${e.key || e.code}`, e.timeStamp), true);
+canvas.addEventListener('pointerdown', (e) => probeLog('touch down', e.timeStamp), true);
+canvas.addEventListener('pointerup', (e) => probeLog('touch up', e.timeStamp), true);
 
 // Leaving the Creation (or the screen sleeping) pauses the run and the music.
 document.addEventListener('visibilitychange', () => {
@@ -174,6 +235,8 @@ function update(dt) {
       acc -= DT;
     }
     if (P) music.setSpeedFactor(P.speed / SPEED0);
+    if (!P.grounded && !P.ship) visAngle = P.angle;
+    else { const up = Math.round(visAngle / 360) * 360; visAngle += (up - visAngle) * Math.min(1, dt * 30); if (Math.abs(up - visAngle) < 1) visAngle = 0; }
   } else if (state === 'DEAD') {
     deathTimer += dt;
     for (const p of parts) { p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 700 * dt; p.life -= dt; }
@@ -282,12 +345,11 @@ function drawPortal(kind, sx, syBottom, flip) {
   else { const up = (kind === T.PORTAL_FLIP) !== flip;
     if (up) tri(sx + 8, ay - 5, sx + 4, ay + 2, sx + 12, ay + 2); else tri(sx + 8, ay + 5, sx + 4, ay - 2, sx + 12, ay - 2); g.fill(); }
 }
-function drawCube(cx, cy, deg, scale = 1) {
-  g.save(); g.translate(cx, cy); g.rotate(deg * Math.PI / 180); g.scale(scale, scale);
-  g.fillStyle = COL.cube; g.fillRect(-8, -8, 16, 16);
-  g.strokeStyle = '#fff'; g.lineWidth = 1; g.strokeRect(-7.5, -7.5, 15, 15);
-  g.fillStyle = '#0a5a78'; g.fillRect(-5, -5, 10, 10);
-  g.fillStyle = COL.cubeIn; g.fillRect(-3, -3, 6, 6);
+// flipY: running on the ceiling, so the rabbit's feet point up
+function drawRabbit(cx, cy, deg, scale = 1, flipY = false) {
+  g.save(); g.translate(Math.round(cx), Math.round(cy)); g.rotate(deg * Math.PI / 180); g.scale(scale, flipY ? -scale : scale);
+  g.imageSmoothingEnabled = false;
+  g.drawImage(rabbitSprite, -8, -8);
   g.restore();
 }
 function drawShip(cx, cy, tilt, flip, thrust) {
@@ -295,7 +357,7 @@ function drawShip(cx, cy, tilt, flip, thrust) {
   g.fillStyle = COL.ship; g.strokeStyle = '#fff'; g.lineWidth = 1;
   g.beginPath(); g.moveTo(-9, 1); g.lineTo(2, 0); g.lineTo(10, 4); g.lineTo(-9, 8); g.closePath(); g.fill(); g.stroke();
   g.beginPath(); g.moveTo(-9, 1); g.lineTo(-4, 1); g.lineTo(-8, -5); g.closePath(); g.fill(); g.stroke();
-  g.fillStyle = COL.cube; g.fillRect(-5, -6, 6, 6); g.strokeRect(-4.5, -5.5, 6, 6);
+  g.imageSmoothingEnabled = false; g.drawImage(rabbitSprite, -6, -9, 9, 9);   // rabbit pilot
   if (thrust) { const f = Math.random() * 3; g.fillStyle = COL.flame; tri(-9, 3, -9, 7, -15 - f, 5); g.fill(); }
   g.restore();
 }
@@ -337,7 +399,7 @@ function drawWorld(vis, ox, oy) {
 function drawPlayer(ox, oy) {
   const [cx, cy] = playerScreen();
   if (P.ship) drawShip(cx + ox, cy + oy, (P.vy / SHIP_VMAX) * 28, P.inv, held() || (bot && P.vy < 0));
-  else drawCube(cx + ox, cy + oy, P.inv ? -P.angle : P.angle);
+  else drawRabbit(cx + ox, cy + oy, P.inv ? -visAngle : visAngle, 1, P.inv);
 }
 
 function fmt(t) { return t.toFixed(1) + 's'; }
@@ -394,24 +456,26 @@ function drawMenu(vis) {
   g.fillStyle = kick > 0.3 ? '#ffb070' : '#fff'; g.fillRect(0, FLOOR, W, 1);
   for (let x = -(renderX % TILE); x < W; x += TILE) { g.fillStyle = COL.groundHi; g.fillRect(x, FLOOR + 3, 1, 5); }
   // title
-  text('GEOMETRY', W / 2, 38, 16, COL.text, 'center');
-  text('RABBIT', W / 2, 58, 16, COL.accent, 'center');
-  text('an R1 runner', W / 2, 80, 8, COL.dim, 'center');
-  // difficulty picker (wheel)
-  for (let d = 0; d < 3; d++) {
-    const y = MENU_Y + d * 29, sel = d === data.diff;
-    if (sel) { g.fillStyle = COL.accent; g.fillRect(24, y, 192, 26); }
-    else { g.strokeStyle = '#4a3f99'; g.strokeRect(24.5, y + 0.5, 191, 25); }
-    text(DIFF[d], 34, y + 5, 8, sel ? '#fff' : COL.dim);
-    text(SONG_TITLES[SONG_FOR_DIFF[d]], 34, y + 15, 8, sel ? '#ffe2d4' : '#5a5090');
-    text(data.best[d] ? data.best[d].toFixed(1) + 's' : '--', 208, y + 9, 8, sel ? '#fff' : COL.dim, 'right');
+  text('GEOMETRY', W / 2, 36, 16, COL.text, 'center');
+  text('RABBIT', W / 2, 56, 16, COL.accent, 'center');
+  // level picker (wheel), then BUTTON TEST
+  for (let d = 0; d < MENU_ROWS; d++) {
+    const y = MENU_Y + d * MENU_STEP, sel = d === menuSel;
+    if (sel) { g.fillStyle = d === 3 ? '#4a3f99' : COL.accent; g.fillRect(24, y, 192, 22); }
+    else { g.strokeStyle = '#4a3f99'; g.strokeRect(24.5, y + 0.5, 191, 21); }
+    if (d === 3) { text('BUTTON TEST', W / 2, y + 7, 8, sel ? '#fff' : '#5a5090', 'center'); continue; }
+    text(DIFF[d], 34, y + 3, 8, sel ? '#fff' : COL.dim);
+    text(SONG_TITLES[SONG_FOR_DIFF[d]], 34, y + 12, 8, sel ? '#ffe2d4' : '#5a5090');
+    text(data.best[d] ? data.best[d].toFixed(1) + 's' : '--', 208, y + 7, 8, sel ? '#fff' : COL.dim, 'right');
   }
-  // cube hops on every beat
-  drawCube(PX, FLOOR - 8 - beat * 10, beat * 90);
+  // the rabbit hops and flips on every beat
+  const hop = music.playing && vis.beatT > 0 ? Math.min(1, (music.ctx.currentTime - vis.beatT) / 0.3) : 1;
+  drawRabbit(PX, FLOOR - 8 - Math.sin(hop * Math.PI) * 12, hop < 1 ? hop * 360 : 0);
   if (data.diff === 2) drawShip(PX + 120, FLOOR - 30 - 4 * Math.sin(menuT * 3), 8 * Math.sin(menuT * 3), false, true);
-  if (((menuT * 2) | 0) % 2 === 0) text('TAP TO PLAY', W / 2, FLOOR + 18, 8, COL.text, 'center');
-  text('WHEEL = LEVEL', W / 2, FLOOR + 36, 8, COL.dim, 'center');
-  text(`ATTEMPTS ${data.attempts[data.diff]}`, W / 2, FLOOR + 52, 8, '#5a5090', 'center');
+  if (((menuT * 2) | 0) % 2 === 0) text(menuSel === 3 ? 'PRESS TO OPEN' : 'PRESS SIDE BUTTON', W / 2, FLOOR + 14, 8, COL.text, 'center');
+  text('SIDE BUTTON = JUMP', W / 2, FLOOR + 32, 8, COL.dim, 'center');
+  text('WHEEL = LEVEL', W / 2, FLOOR + 46, 8, COL.dim, 'center');
+  text(`ATTEMPTS ${data.attempts[data.diff]}`, W / 2, FLOOR + 60, 8, '#5a5090', 'center');
 }
 
 function drawSplash() {
@@ -420,14 +484,39 @@ function drawSplash() {
   g.fillStyle = COL.ground; g.fillRect(0, FLOOR, W, H - FLOOR); g.fillStyle = '#fff'; g.fillRect(0, FLOOR, W, 1);
   text('GEOMETRY', W / 2, 60, 16, COL.text, 'center');
   text('RABBIT', W / 2, 84, 16, COL.accent, 'center');
-  drawCube(W / 2, 150, menuT * 120, 1.5);
+  const spin = (menuT % 1.6) / 0.5, jump = spin < 1 ? Math.sin(spin * Math.PI) : 0;
+  drawRabbit(W / 2, 176 - 24 - jump * 30, spin < 1 ? spin * 360 : 0, 3);
   if (((menuT * 2) | 0) % 2 === 0) text('TAP TO START', W / 2, FLOOR + 22, 8, COL.text, 'center');
-  text('♪ sound on', W / 2, FLOOR + 44, 8, COL.dim, 'center');
+  text('♪ tap the screen once', W / 2, FLOOR + 40, 8, COL.dim, 'center');
+  text('for sound', W / 2, FLOOR + 52, 8, COL.dim, 'center');
+}
+
+function drawProbe() {
+  g.fillStyle = '#070722'; g.fillRect(0, 0, W, H);
+  text('BUTTON TEST', 8, 8, 8, COL.accent);
+  text(`${probe.fps} FPS`, W - 8, 8, 8, probe.fps >= 55 ? '#5ee29a' : COL.gold, 'right');
+  text('Press side button AND', 8, 24, 8, COL.dim);
+  text('tap screen together:', 8, 36, 8, COL.dim);
+  if (probe.lags.length) {
+    const l = probe.lags, avg = l.reduce((a, b) => a + b, 0) / l.length;
+    text(`side lag ${Math.round(avg)}ms`, 8, 52, 8, COL.text);
+    text(`n=${l.length} min ${Math.round(Math.min(...l))} max ${Math.round(Math.max(...l))}`, 8, 64, 8, COL.dim);
+  } else text('side lag  --', 8, 52, 8, COL.text);
+  g.fillStyle = '#2c2570'; g.fillRect(8, 78, W - 16, 1);
+  probe.log.forEach((e, i) => {
+    const y = 86 + i * 14;
+    text(e.name.slice(0, 18), 8, y, 8, e.name.startsWith('touch') ? '#14bee6' : e.name.startsWith('scroll') ? COL.dim : COL.gold);
+    text(i ? `+${Math.round(e.gap)}` : '', W - 8, y, 8, COL.dim, 'right');
+  });
+  if (!probe.log.length) text('waiting for input...', 8, 90, 8, '#5a5090');
+  g.strokeStyle = '#fff'; g.strokeRect(176.5, 254.5, 56, 20); text('BACK', 204, 261, 8, COL.text, 'center');
+  text('wheel = back', 8, 261, 8, '#5a5090');
 }
 
 function render() {
   const vis = music.update();
   if (state === 'SPLASH') { drawSplash(); return; }
+  if (state === 'PROBE') { drawProbe(); return; }
   if (state === 'MENU') { drawMenu(vis); drawMusicStrip(vis); drawVolume(); return; }
   const lead = state === 'PLAY' ? acc : 0;
   renderX = P.x + P.speed * lead;
@@ -454,6 +543,7 @@ const perf = { frames: 0, sum: 0, max: 0, updMax: 0 };
 function frame(now) {
   let dt = (now - last) / 1000; last = now;
   perf.frames++; perf.sum += dt; perf.max = Math.max(perf.max, dt);
+  probe.frames++; if (now - probe.fpsT >= 1000) { probe.fps = probe.frames; probe.frames = 0; probe.fpsT = now; }
   if (dt > 0.05) dt = 0.05;
   const t0 = performance.now();
   update(dt);
@@ -464,6 +554,7 @@ function frame(now) {
 
 async function boot() {
   data = await load();
+  menuSel = data.diff;
   music.volume = data.volume;
   try { await document.fonts.load(`8px ${FONT}`); await document.fonts.load(`16px ${FONT}`); } catch { /* fallback font */ }
   requestAnimationFrame((t) => { last = t; frame(t); });

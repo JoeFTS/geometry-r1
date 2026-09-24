@@ -17,7 +17,8 @@ export const DT = 1 / 120;                        // physics substep
 export const SPEED0 = 180, SPEED_RAMP = 0.9, SPEED_MAX = 270;
 export const JUMP_H = 2.17 * TILE, PAD_MUL = 1.3;
 export const SHIP_ACC = 1500, SHIP_VMAX = 240;
-export const JUMP_BUFFER = 8;                      // ~65 ms early press still counts
+export const JUMP_BUFFER = 15;                     // a press up to 125 ms before landing still jumps
+export const COYOTE = 6;                           // ...and up to 50 ms after running off a ledge
 
 export const T = { AIR: 0, BLOCK: 1, SPIKE: 2, SPIKE_DOWN: 3, PIT: 4, PAD: 5,
                    PORTAL_FLIP: 6, PORTAL_UNFLIP: 7, PORTAL_SHIP: 8 };
@@ -36,7 +37,7 @@ export function setSpeed(s, v) {
   s.airtime = 4.2 * TILE / v;
   s.vjump = 4 * JUMP_H / (s.airtime - DT);
   s.grav = 2 * s.vjump / (s.airtime + DT);
-  s.rotRate = 180 / s.airtime;
+  s.rotRate = 360 / s.airtime;                   // one full flip per jump (lands upright)
 }
 
 // ---------- level stream ----------
@@ -127,7 +128,7 @@ export class GridWorld {
 // ---------- player ----------
 export function newPlayer(ramp = true) {
   const s = { x: 0, y: GY - TILE, vy: 0, angle: 0, grounded: true, inv: false, ship: false,
-              lastPadCol: -1, lastPortalCol: -1, time: 0, jumpBuffer: 0, ramp, dead: null };
+              lastPadCol: -1, lastPortalCol: -1, time: 0, jumpBuffer: 0, coyote: 0, ramp, dead: null };
   setSpeed(s, SPEED0);
   return s;
 }
@@ -136,7 +137,7 @@ export const clonePlayer = (s) => ({ ...s });
 // Portals: local coordinates are mirrored so the screen position is unchanged, and
 // from then on gravity pulls toward the other surface.
 function enterPortal(s, col, kind, ev) {
-  s.lastPortalCol = col;
+  s.lastPortalCol = col; s.coyote = 0;
   if (kind === T.PORTAL_SHIP) { s.ship = true; s.angle = 0; ev && ev.push({ type: 'portal', kind }); return; }
   s.y = (TOP + GY) - (s.y + TILE); s.vy = -s.vy; s.inv = !s.inv; s.grounded = false;
   ev && ev.push({ type: 'portal', kind });
@@ -213,15 +214,17 @@ export function step(s, w, held, ev) {
       if (hx1 > tx + 5 && hx0 < tx + 11 && hy1 > sy0 && hy0 < sy1) { die(s, c, r, 'spike'); return s; }
     } else if (t === T.PAD && c !== s.lastPadCol && !s.ship) {
       if (hx1 > tx + 2 && hx0 < tx + 14 && s.y + TILE > top + 8) {
-        s.vy = -s.vjump * PAD_MUL; s.grounded = false; s.lastPadCol = c;
+        s.vy = -s.vjump * PAD_MUL; s.grounded = false; s.lastPadCol = c; s.coyote = 0;
         ev && ev.push({ type: 'pad' });
       }
     }
   }
 
   if (!s.ship) {
-    if (s.grounded && (held || s.jumpBuffer > 0)) {
-      s.vy = -s.vjump; s.grounded = false; s.jumpBuffer = 0;
+    if (s.grounded) s.coyote = COYOTE; else if (s.coyote > 0) s.coyote--;
+    const canJump = s.grounded || (s.coyote > 0 && s.vy >= 0);
+    if (canJump && (held || s.jumpBuffer > 0)) {
+      s.vy = -s.vjump; s.grounded = false; s.jumpBuffer = 0; s.coyote = 0;
       ev && ev.push({ type: 'jump' });
     }
     if (!s.grounded) s.angle += s.rotRate * DT;

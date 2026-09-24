@@ -37,7 +37,7 @@ function adv(w, s, held) { const n = step(clonePlayer(s), w, held); return n.dea
 // 0..WINDOW substeps, and every delay must still lead to the goal.
 function solvable(w, s0) {
   const goal = (w.genCol - 2) * TILE, memo = new Map();
-  const key = (s) => `${s.x.toFixed(2)}|${s.y.toFixed(1)}|${Math.round(s.vy)}|${s.lastPadCol}|${s.grounded ? 1 : 0}`;
+  const key = (s) => `${s.x.toFixed(2)}|${s.y.toFixed(1)}|${Math.round(s.vy)}|${s.lastPadCol}|${s.grounded ? 1 : 0}|${s.coyote}`;
   function ok(s) {
     if (s.x >= goal) return true;
     const k = key(s);
