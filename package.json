@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Geometry Rabbit \u2014 Geometry Dash-style runner with a chiptune soundtrack for the Rabbit R1",
+  "description": "Geometry Rabbit — Geometry Dash-style runner with a chiptune soundtrack for the Rabbit R1",
   "scripts": {
     "verify": "node tools/verify.mjs",
     "bot": "node test/botrun.mjs 150 4",
@@ -12,6 +12,7 @@
     "dev": "cd src && python3 -m http.server 8765"
   },
   "devDependencies": {
-    "playwright": "^1.63.0"
+    "playwright": "^1.63.0",
+    "qrcode": "^1.5.4"
   }
 }
