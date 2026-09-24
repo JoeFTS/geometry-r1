@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=240, height=282, initial-scale=1, user-scalable=no" />
+  <meta name="theme-color" content="#ff4f00" />
+  <title>Geometry Rabbit</title>
+  <style>
+    @font-face { font-family: 'Press Start 2P'; src: url('fonts/PressStart2P.ttf') format('truetype'); font-display: block; }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 240px; height: 282px; overflow: hidden; background: #070722;
+      -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent;
+      touch-action: none; overscroll-behavior: none; }
+    canvas { display: block; width: 240px; height: 282px; touch-action: none; }
+  </style>
+</head>
+<body>
+  <canvas id="c" width="240" height="282"></canvas>
+  <script type="module" src="game.mjs"></script>
+</body>
+</html>
