@@ -98,6 +98,9 @@ if (!ONLY_SONGS) {
   const box = { x: 120, y: 160 };
   await page.evaluate(() => window.__game.startRun());               // fresh runway for the touch check
   await page.waitForFunction(() => window.__game.P.grounded); await sleep(150);
+  const tr = await page.evaluate(() => { const g = window.__game; g.rewindJump(performance.now() - 60); return { h: 80 - g.P.y, grounded: g.P.grounded }; });
+  ok('a touch 60 ms old jumps from where it landed', !tr.grounded && tr.h > 5, `height ${tr.h.toFixed(1)} px immediately`);
+  await page.waitForFunction(() => window.__game.P.grounded);
   const pre = await G(page, 'g.state + " " + Math.floor(g.P.x/16) + "m"');
   await page.touchscreen.tap(box.x, box.y); await sleep(30);
   ok('screen tap jumps', await G(page, 'g.state === "PLAY" && !g.P.grounded'), `before tap: ${pre}; after: ${await G(page, 'g.state + (g.P.dead ? " " + g.P.dead.what : "")')}`);
@@ -112,7 +115,7 @@ if (!ONLY_SONGS) {
   await shot(page, '05-death');
   const saved = await page.evaluate(() => JSON.parse(decodeURIComponent(escape(atob(window.__store.geometryRabbit)))));
   ok('creationStorage holds Base64 JSON save', saved && saved.attempts[0] >= 1 && saved.sideLag === 120, JSON.stringify(saved));
-  await page.touchscreen.tap(172, 190); await sleep(300);
+  await page.touchscreen.tap(120, 160); await sleep(300);
   ok('MENU button on death card', await G(page, 'g.state') === 'MENU');
   await fire(page, 'sideClick'); await sleep(200);
   await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
