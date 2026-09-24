@@ -6,7 +6,7 @@ const b64encode = (s) => btoa(unescape(encodeURIComponent(s)));
 const b64decode = (s) => decodeURIComponent(escape(atob(s)));
 
 const KEY = 'geometryRabbit';
-export const DEFAULTS = { best: [0, 0, 0], attempts: [0, 0, 0], diff: 0, volume: 0.7 };
+export const DEFAULTS = { best: [0, 0, 0], attempts: [0, 0, 0], diff: 0, volume: 0.5, sideLag: 120 };
 
 export async function load() {
   try {

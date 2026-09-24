@@ -1,7 +1,7 @@
 // game.mjs — Geometry Rabbit: screens, input, rendering. Physics lives in engine.mjs,
 // music in music.mjs. Portrait 240x282: music visualizer strip on top, sky, the
 // 6-row play band, and the HUD on the floor band below the ground line.
-import { World, newPlayer, step, T, TILE, ROWS, GY, TOP, DT, SPEED0, SHIP_VMAX, JUMP_BUFFER, DIFF } from './engine.mjs';
+import { World, newPlayer, clonePlayer, step, T, TILE, ROWS, GY, TOP, DT, SPEED0, SHIP_VMAX, JUMP_BUFFER, DIFF } from './engine.mjs';
 import { Music, SONG_TITLES } from './music.mjs';
 import { SONG_FOR_DIFF } from './songs.mjs';
 import { load, save } from './storage.mjs';
@@ -67,7 +67,7 @@ const rabbitSprite = (() => {
 
 // ---------- state ----------
 const music = new Music();
-let data = { best: [0, 0, 0], attempts: [0, 0, 0], diff: 0, volume: 0.7 };
+let data = { best: [0, 0, 0], attempts: [0, 0, 0], diff: 0, volume: 0.5, sideLag: 120 };
 let state = 'SPLASH';            // SPLASH -> MENU -> PLAY <-> PAUSE, PLAY -> DEAD
 let world = null, P = null, bot = null;
 let acc = 0, renderX = 0, renderY = 0;
@@ -78,7 +78,10 @@ let volShow = 0;
 const parts = [];
 let menuT = 0;
 let menuSel = 0;                 // 0-2 = level, 3 = BUTTON TEST
-let visAngle = 0;                // drawn rotation: follows the flip, settles upright on landing
+let visAngle = 0;
+let visOffsetY = 0;              // eases away the visual pop when a side-button jump is rewound
+const hist = [];                 // last ~330 ms of substeps: { s: state before the step, held, jumped }
+const HIST_MAX = 40;                // drawn rotation: follows the flip, settles upright on landing
 
 const held = () => touchHeld || sideHeld || keyHeld;
 
@@ -90,7 +93,7 @@ const stars = [];
 // ---------- flow ----------
 function startRun() {
   world = new World(data.diff, (Date.now() ^ 0xA5A5F00D) >>> 0);
-  P = newPlayer(); acc = 0; parts.length = 0; visAngle = 0;
+  P = newPlayer(); acc = 0; parts.length = 0; visAngle = 0; visOffsetY = 0; hist.length = 0;
   attempt = ++data.attempts[data.diff]; save(data);
   bot = BOT ? createBot() : null;
   state = 'PLAY';
@@ -134,8 +137,15 @@ function press() {
     case 'DEAD': if (deathTimer > 0.45) startRun(); break;
   }
 }
+function closeProbe() {
+  if (probe.lags.length >= 3) {
+    const l = [...probe.lags].sort((a, b) => a - b), med = l[l.length >> 1];
+    data.sideLag = Math.round(Math.max(0, Math.min(150, med))); save(data);
+  }
+  toMenu();
+}
 function wheel(dir) {                         // dir: -1 up, +1 down
-  if (state === 'PROBE') { toMenu(); return; }
+  if (state === 'PROBE') { closeProbe(); return; }
   if (state === 'MENU') changeDiff(dir);
   else if (state === 'PLAY' || state === 'PAUSE' || state === 'DEAD') changeVolume(-dir * 0.1);
 }
@@ -147,7 +157,7 @@ const active = new Set();
 canvas.addEventListener('pointerdown', (e) => {
   e.preventDefault();
   const [x, y] = canvasPoint(e);
-  if (state === 'PROBE') { music.unlock(); if (x > 176 && y > 250) toMenu(); return; }
+  if (state === 'PROBE') { music.unlock(); if (x > 176 && y > 250) closeProbe(); return; }
   active.add(e.pointerId); touchHeld = true;
   if (state === 'MENU') {
     if (x > 196 && y < 30) { music.unlock(); changeVolume(data.volume >= 1 ? -1 : 0.25); return; }   // speaker icon
@@ -163,11 +173,38 @@ canvas.addEventListener('pointerup', release);
 canvas.addEventListener('pointercancel', release);
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
+// The R1 reports sideClick ~120 ms after the button goes down (measured in BUTTON TEST:
+// about the length of a press, so it most likely fires on release). To remove that lag,
+// a side-button jump is applied where the rabbit was when the button was really pressed:
+// rewind data.sideLag ms of substeps, press there, and replay the recorded input up to now.
+// Falls back to an ordinary buffered press if a jump already happened in that window, the
+// history is too short, or the replay would die (it can't undo the past).
+function sideJump() {
+  if (state !== 'PLAY' || bot || P.ship) { press(); return; }
+  const lagSteps = Math.min(18, Math.round((data.sideLag || 0) / 1000 / DT));
+  if (lagSteps < 1 || hist.length < lagSteps) { press(); return; }
+  const k = hist.length - lagSteps;
+  for (let i = k; i < hist.length; i++) if (hist[i].jumped) { press(); return; }
+  const s = clonePlayer(hist[k].s);
+  s.jumpBuffer = JUMP_BUFFER;
+  const replay = [];
+  for (let i = k; i < hist.length; i++) {
+    const before = clonePlayer(s), ev = [];
+    step(s, world, hist[i].held, ev);
+    if (s.dead) { press(); return; }
+    replay.push({ s: before, held: hist[i].held, jumped: ev.some((e) => e.type === 'jump') });
+  }
+  if (!replay.some((r) => r.jumped)) { press(); return; }   // wasn't grounded in time: normal buffer
+  hist.splice(k, hist.length - k, ...replay);
+  visOffsetY += P.y - s.y;
+  P = s;
+}
+
 // R1 hardware (creations-sdk): the side button is the jump button.
 //   sideClick      -> one jump (buffered, so pressing just before landing still counts)
 //   longPressStart -> held: keeps bouncing, or keeps the ship climbing, until longPressEnd
 // A double click arrives as two sideClicks ~50 ms apart; the second just re-arms the buffer.
-window.addEventListener('sideClick', () => { if (state !== 'PROBE') press(); });
+window.addEventListener('sideClick', () => { if (state !== 'PROBE') sideJump(); });
 window.addEventListener('longPressStart', () => { if (state === 'PROBE') return; sideHeld = true; press(); });
 window.addEventListener('longPressEnd', () => { sideHeld = false; });
 window.addEventListener('scrollUp', () => wheel(-1));
@@ -222,7 +259,10 @@ function update(dt) {
     while (acc >= DT && state === 'PLAY') {
       const ev = [];
       const h = bot ? bot(world, P) : held();
+      const before = clonePlayer(P);
       step(P, world, h, ev);
+      hist.push({ s: before, held: h, jumped: ev.some((e) => e.type === 'jump') });
+      if (hist.length > HIST_MAX) hist.shift();
       for (const e of ev) {
         if (e.type === 'pad') music.sfx('pad');
         else if (e.type === 'portal') {
@@ -235,6 +275,8 @@ function update(dt) {
       acc -= DT;
     }
     if (P) music.setSpeedFactor(P.speed / SPEED0);
+    visOffsetY *= Math.exp(-dt / 0.045);
+    if (Math.abs(visOffsetY) < 0.3) visOffsetY = 0;
     if (!P.grounded && !P.ship) visAngle = P.angle;
     else { const up = Math.round(visAngle / 360) * 360; visAngle += (up - visAngle) * Math.min(1, dt * 30); if (Math.abs(up - visAngle) < 1) visAngle = 0; }
   } else if (state === 'DEAD') {
@@ -499,9 +541,10 @@ function drawProbe() {
   text('tap screen together:', 8, 36, 8, COL.dim);
   if (probe.lags.length) {
     const l = probe.lags, avg = l.reduce((a, b) => a + b, 0) / l.length;
-    text(`side lag ${Math.round(avg)}ms`, 8, 52, 8, COL.text);
+    text(`lag ${Math.round(avg)}ms`, 8, 52, 8, COL.text);
     text(`n=${l.length} min ${Math.round(Math.min(...l))} max ${Math.round(Math.max(...l))}`, 8, 64, 8, COL.dim);
   } else text('side lag  --', 8, 52, 8, COL.text);
+  text(`jump comp ${data.sideLag}ms`, W - 8, 52, 8, COL.gold, 'right');
   g.fillStyle = '#2c2570'; g.fillRect(8, 78, W - 16, 1);
   probe.log.forEach((e, i) => {
     const y = 86 + i * 14;
@@ -510,7 +553,7 @@ function drawProbe() {
   });
   if (!probe.log.length) text('waiting for input...', 8, 90, 8, '#5a5090');
   g.strokeStyle = '#fff'; g.strokeRect(176.5, 254.5, 56, 20); text('BACK', 204, 261, 8, COL.text, 'center');
-  text('wheel = back', 8, 261, 8, '#5a5090');
+  text('back saves it', 8, 261, 8, '#5a5090');
 }
 
 function render() {
@@ -520,7 +563,7 @@ function render() {
   if (state === 'MENU') { drawMenu(vis); drawMusicStrip(vis); drawVolume(); return; }
   const lead = state === 'PLAY' ? acc : 0;
   renderX = P.x + P.speed * lead;
-  renderY = state === 'PLAY' && !P.grounded ? P.y + P.vy * lead : P.y;
+  renderY = (state === 'PLAY' && !P.grounded ? P.y + P.vy * lead : P.y) + (state === 'PLAY' ? visOffsetY : 0);
   let ox = 0, oy = 0;
   if (shake > 0) { ox = (Math.random() * 6 - 3) | 0; oy = (Math.random() * 4 - 2) | 0; shake--; }
   drawWorld(vis, ox, oy);
@@ -555,6 +598,7 @@ function frame(now) {
 async function boot() {
   data = await load();
   menuSel = data.diff;
+  data.volume = 0.5;               // every launch starts at 50%; the wheel changes it for the session
   music.volume = data.volume;
   try { await document.fonts.load(`8px ${FONT}`); await document.fonts.load(`16px ${FONT}`); } catch { /* fallback font */ }
   requestAnimationFrame((t) => { last = t; frame(t); });

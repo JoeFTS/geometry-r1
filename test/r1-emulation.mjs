@@ -51,6 +51,7 @@ if (!ONLY_SONGS) {
   const { page, errors } = await newPage();
   await shot(page, '01-splash');
   ok('boots to splash', await G(page, 'g.state') === 'SPLASH');
+  ok('volume starts at 50%', await G(page, 'g.data.volume') === 0.5 && await G(page, 'g.music.volume') === 0.5);
   await page.touchscreen.tap(120, 200);
   await sleep(400);
   ok('tap unlocks audio -> menu', await G(page, 'g.state') === 'MENU');
@@ -80,15 +81,28 @@ if (!ONLY_SONGS) {
   ok('side button starts a run', await G(page, 'g.state') === 'PLAY');
   ok('stage song playing', await G(page, 'g.music.songKey') === 'normal');
   await page.waitForFunction(() => window.__game.P.grounded);
+  await sleep(250);
+  const comp = await page.evaluate(() => {
+    const g = window.__game, x0 = g.P.x;
+    window.dispatchEvent(new CustomEvent('sideClick'));
+    return { h: 80 - g.P.y, vy: g.P.vy, dx: g.P.x - x0, grounded: g.P.grounded };
+  });
+  // compensated: the jump already started ~120 ms ago, so the rabbit is well off the ground right away
+  ok('side-button jump is rewound by the measured lag', !comp.grounded && comp.h > 15, `height ${comp.h.toFixed(1)} px the instant the event arrives`);
+  await page.waitForFunction(() => window.__game.P.grounded);
+  await sleep(200);
   await fire(page, 'sideClick'); await sleep(40);
   ok('side button jumps', await G(page, '!g.P.grounded || g.P.vy < 0'));
   await sleep(700);
   // touch hold = bounce repeatedly
   const box = { x: 120, y: 160 };
+  await page.evaluate(() => window.__game.startRun());               // fresh runway for the touch check
+  await page.waitForFunction(() => window.__game.P.grounded); await sleep(150);
+  const pre = await G(page, 'g.state + " " + Math.floor(g.P.x/16) + "m"');
   await page.touchscreen.tap(box.x, box.y); await sleep(30);
-  ok('screen tap jumps', await G(page, '!g.P.grounded'));
+  ok('screen tap jumps', await G(page, 'g.state === "PLAY" && !g.P.grounded'), `before tap: ${pre}; after: ${await G(page, 'g.state + (g.P.dead ? " " + g.P.dead.what : "")')}`);
   await fire(page, 'scrollUp'); await sleep(80);
-  ok('wheel in-run changes volume', Math.abs(await G(page, 'g.data.volume') - 0.8) < 1e-6);
+  ok('wheel in-run changes volume (50% -> 60%)', Math.abs(await G(page, 'g.data.volume') - 0.6) < 1e-6);
   await shot(page, '04-run-volume');
   // no input: the first obstacle kills us
   await page.waitForFunction(() => window.__game.state === 'DEAD', null, { timeout: 20000 });
@@ -97,7 +111,7 @@ if (!ONLY_SONGS) {
   await sleep(900);
   await shot(page, '05-death');
   const saved = await page.evaluate(() => JSON.parse(decodeURIComponent(escape(atob(window.__store.geometryRabbit)))));
-  ok('creationStorage holds Base64 JSON save', saved && saved.attempts[0] === 1, JSON.stringify(saved));
+  ok('creationStorage holds Base64 JSON save', saved && saved.attempts[0] >= 1 && saved.sideLag === 120, JSON.stringify(saved));
   await page.touchscreen.tap(172, 190); await sleep(300);
   ok('MENU button on death card', await G(page, 'g.state') === 'MENU');
   await fire(page, 'sideClick'); await sleep(200);
