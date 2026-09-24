@@ -38,7 +38,8 @@ soundtrack. Joe asked for end-to-end: build, test, deploy, then show him.
 - [x] Volume starts at 50% every launch
 - [x] Round 3: touch felt laggy too -> touch jumps rewound to the OS touch timestamp; desynchronized canvas
 - [x] Round 3: layout -> no stars/planet, stats bar on top, music strip + big JUMP button at the bottom
-- [ ] Joe: playtest touch + side-button feel; BUTTON TEST now also shows touch delay
+- [x] Round 4: +17 ms display-frame compensation on rewinds; 1x canvas + sprite caches (sky/tiles/text); volume 30%; animated JUMP button (mini rabbit, carrot, ripples, squash)
+- [ ] Joe: report BUTTON TEST FPS + touch delay from the R1 (emulator can't model the R1 GPU)
 
 ## Review
 - Built and deployed 2026-09-24. Live: https://joefts.github.io/geometry-r1/src/index.html ; QR docs/install-qr.png ; showcase https://claude.ai/artifact/MVEq25nuUR9yYWoMuC4r9y
